@@ -1,0 +1,1332 @@
+---
+title: "Statistical Machine Learning Homework 2"
+author: "Tsiky Tafita RAKOTOHERISOA"
+date: "2024-12-09"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Exercise 1
+
+\vspace{1.5cm}
+
+```{r}
+library(class)
+library(rpart)
+library(rpart.plot)
+library(ROCR)
+library(corrplot)
+library(ggplot2)
+library(reshape2)
+```
+
+
+```{r}
+# Loading the dataset
+prostate <- read.csv("prostate-cancer-1.csv")   
+```
+
+\vspace{1.5cm}
+**1. Comment on the shape of this dataset in terms of the sample size and the dimensionality of the input space**
+\vspace{1.5cm}
+
+```{r}
+# Sample size
+n <- nrow(prostate)
+
+# Dimensionality of the input space
+p <- ncol(prostate) - 1
+
+cat("Sample size (n):", n, "\n")
+cat("Dimensionality of input space:", p, "\n")
+```
+\vspace{1.5cm}
+$\Longrightarrow$ The dataset is highly dimensional with 500 input features but only 79 samples, indicating a "wide" dataset. This disparity suggests a potential risk of overfitting, as the model might struggle to generalize well due to the limited number of samples relative to the high number of features.
+\vspace{1.5cm}
+
+**2. Comment succinctly from the statistical perspective on the type of data in the input space**
+
+
+```{r}
+# Check the type of the dataset
+typeof(prostate)
+
+# Check the type of the input space
+typeof(prostate$X206212_at)
+
+# Check for the missing values in the dataset
+sum(is.na(prostate))
+
+```
+
+\vspace{1.5cm}
+$\Longrightarrow$ The dataset prostate is of type "list". 
+
+The input space (e.g., the variable X206212at) is of type "double". This means that the input features are numeric. 
+
+Furthermore, there are no missing values in the dataset, which is advantageous as it avoids the need for imputation or removal of incomplete records, leading to cleaner and more reliable data for analysis.
+
+Given that we are performing binary classification, each sample in the dataset is associated with one of two possible class labels, "0" for non-cancer subjects and "1" for cancer subjects.
+\vspace{1.5cm}
+
+**3. Plot the distribution of the response for this dataset and comment.**
+
+
+```{r}
+# Frequency and percentage distributions
+response_freq <- table(prostate$Y)
+response_perc <- prop.table(response_freq) * 100
+
+# Display of the result
+cat("Frequency distribution:")
+print(response_freq)
+cat("\nPercentage distribution:")
+print(response_perc)
+
+# plot of the distribution of the response for this dataset
+par(mfrow = c(1, 2))
+barplot(response_freq, main = "Frequency Distribution", col = "skyblue", xlab = "Response", ylab = "Frequency")
+barplot(response_perc, main = "Percentage Distribution", col = "pink", xlab = "Response", ylab = "Percentage")
+```
+\vspace{1.5cm}
+
+
+***Comment:***
+
+- According to this plot, we can say that the gene expression of cancer subject is larger(represented by 1) than the gene expression of non-cancer subject(represented by 0).
+
+- According to the value seen in the table, the total gene expression of cancer subject is equal to 42 which represent 53.16% of the data. And the total gene expression of non-cancer subject is equal to 37 which represent 46.83 of the data.
+
+- And the difference between these values is not too large.
+\vspace{1.5cm}
+
+**4. Identify the 9 individually most powerful predictor variables with respect to the response according the Kruskal-Wallis test statistic**
+
+
+```{r}
+# Kruskal-Wllis test statistics for each predictor
+
+kruskal_results <- sapply(names(prostate)[-which(names(prostate) == "Y")], function(var)
+{
+  kruskal.test(as.formula(paste(var, "~ Y")), data = prostate)$statistic
+})
+
+```
+
+
+```{r}
+# Store results as a named vector
+names(kruskal_results) <- names(prostate)[-which(names(prostate) == "Y")]
+```
+
+
+```{r}
+# Identify best  predictors
+
+best_predictor <-  names(sort(kruskal_results , decreasing = TRUE))[1:9]
+
+cat("The 9 most powerful predictor variables with respect to the response according the Kruskal-Wallis test statistic are: \n \n")
+
+ for(b in best_predictor){print(b)}
+```
+
+\vspace{1.5cm}
+
+**5. Generate a type=’h’ plot with the Kruskal-Wallis test statistic as the y-axis and the variable name as the x-axis**
+
+\vspace{1.5cm}
+
+```{r}
+# Plot the results using type "h"
+par(mfrow = c(1, 1))
+plot(kruskal_results[best_predictor], type = "h", main = "Kruskal-Wallis Test Statistics", xlab = "",
+     ylab = "Test Statistic", col = "blue", xaxt = "n")
+axis(1, at = 1:length(kruskal_results[best_predictor]), labels = names(kruskal_results[best_predictor]), las = 2)
+
+```
+\vspace{1.5cm}
+
+**6. Generate the comparative boxplots of the 9 most powerful variable with respect to the response and comment on what you observe.**
+
+\vspace{1.5cm}
+```{r}
+# Set up multi-panel plotting
+par(mfrow = c(3, 3), mar = c(4, 4, 2, 1))
+
+
+#box plots
+for (var in best_predictor)
+{
+  boxplot(as.formula(paste(var, "~Y")), data = prostate, main = paste("Boxplot of ", var), col = c("lightblue", "pink"), xlab = "Response", ylab = var)
+}
+
+```
+
+\vspace{1.5cm}
+***Comment:***
+
+- According to the plot drawn above, we can say that the variable $\textbf{X217844\_at, X201290\_at}$ might be a good indicator of cancer because the median expression level is higher in the cancer group compared to the non-cancer group. This indicates a noticeable difference.
+
+- Overall, the boxplot analysis reveals that certain gene expression levels have significant differences between the non-cancer and cancer groups.
+\vspace{1.5cm}
+
+
+**7. Build the classification tree with cp=0.01**
+\vspace{1.5cm}
+
+***7.1 Plot of the tree***
+\vspace{1.5cm}
+
+```{r}
+# Build the tree
+prostate$Y <- as.factor(prostate$Y)
+tree.xy <- rpart(Y~., data = prostate, control = rpart.control(cp = 0.01))
+
+#Plot the tree
+rpart.plot(tree.xy, col = "blue")
+```
+\vspace{1.5cm}
+
+***7.2 The number of terminal nodes:*** The decision tree has 4 terminal nodes.
+\vspace{1.5cm}
+
+
+***7.3 Mathematical form of Region 2 and Region 4***
+\vspace{1.5cm}
+
+$$
+R_2 = \{ x \in \mathbb{R}^p \mid \text{X201290\_at} \geq 1.1 \text{ and } \text{X2140008\_at} \geq -0.29 \}
+$$
+
+$$
+R_4 = \{ x \in \mathbb{R}^p \mid \text{X201290\_at} < 1.1 \text{ and } \text{X209048\_s\_at} < -0.063 \}
+$$
+\vspace{1.5cm}
+
+***7.4 Comment on the variable at the root of the tree in light of the Kruskal-Wallis statistic***
+
+\vspace{1.5cm}
+
+```{r}
+kruskal.test(prostate$X201290_at ~ Y, data = prostate)
+```
+
+\vspace{1.5cm}
+***Comment:***
+
+- The variable at the root of the tree is $\textbf{X201290\_at}$.
+
+- The decision tree reveals that this variable at the root is a key predictor in differentiating between non-cancerous and cancerous cases. 
+
+- We can say that it is likely high, indicating that its distribution differs significantly between the groups (non-cancer and cancer). This makes it a crucial predictor in distinguishing between the two classes.
+
+\vspace{1.5cm}
+**8. Generate the comparative boxplots of the 9 weakest variable with respect to the response and comment on what you observe.**
+\vspace{1.5cm}
+
+```{r}
+# Weakest predicor 
+
+weakest_predictor <-  names(sort(kruskal_results , decreasing = FALSE))[1:9]
+
+cat("The 9 weakest predictor variables with respect to the response according the Kruskal-Wallis test statistic are: \n \n")
+
+ for(b in weakest_predictor){print(b)}
+```
+
+
+
+```{r}
+# Set up multi-panel plotting
+par(mfrow = c(3, 3), mar = c(4, 4, 2, 1))
+
+
+#box plots
+for (var in weakest_predictor)
+{
+  boxplot(as.formula(paste(var, "~Y")), data = prostate, main = paste("Boxplot of ", var), col = c("lightblue", "pink"), xlab = "Response", ylab = var)
+}
+
+```
+
+\vspace{1.5cm}
+***Comment:***
+
+- These variables may not contribute significantly to the model's ability to differentiate between non-cancerous and cancerous cases.
+
+- In conclusion, these variables do not exhibit significant differences between the non-cancer and cancer groups and cannot be relied upon to differentiate between the two labels.
+
+\vspace{1.5cm}
+
+
+
+**9. Generate the correlation plot of the predictor variables and comment extensively on what they reveal, if anything.**
+
+\vspace{1.5cm}
+```{r}
+# Correlation matrix
+corr_matrix <- cor(prostate[, best_predictor])
+
+# Correlation plot
+corrplot(corr_matrix)
+```
+
+
+\vspace{1.5cm}
+***Comment:***
+
+- The correlation plot shows strong positive correlations among certain variables, such as `X211935_at` and `X200047_s_at`, as indicated by large dark blue circles. 
+
+- Conversely, variables like `X209454_s_at` and `X201290_at` exhibit strong negative correlations, shown by large red circles. 
+
+- Several pairs, such as `X214001_x_at` and `X215333_x_at`, display weak or negligible correlations, suggesting little linear relationship. 
+
+- These patterns highlight potential multicollinearity issues in strongly correlated pairs, while weakly correlated variables may contribute unique information to a predictive model.
+\vspace{1.5cm}
+
+**10. Compute the eigendecomposition of the correlation matrix and comment on the ratio $\frac{lambda_{max}}{lambda_{min}}$.**
+
+\vspace{1.5cm}
+```{r}
+# Computation of eigenvalues and eigenvectors of the correlation matrix
+eigen_decomposition <- eigen(corr_matrix)
+
+# Find the max and min of eigenvalues
+lambda_max <- max(eigen_decomposition$values)
+lambda_min <- min(eigen_decomposition$values)
+
+# ratio
+ratio <- lambda_max / lambda_min
+
+cat("ratio = ", ratio, "\n")
+```
+
+\vspace{1.5cm}
+***Comment on the ratio:***
+
+- It indicates a moderately ill-conditioned matrix. This suggests that there is a notable level of multicollinearity among the predictor variables.
+
+\vspace{1.5cm}
+
+**11. Using the whole data for training and the whole data for test, build the above six learning machines, then plot the comparative ROC curves on the same grid**
+\vspace{1.5cm}
+
+
+```{r}
+x <- prostate[, -ncol(prostate)]           # all columns except the last
+y <- prostate$Y          # the response variable
+
+# Ensure y is a factor for classification
+y <- as.factor(y)
+
+# Train and test sets using the whole data
+prostate_train_x <- x
+prostate_train_y <- y
+
+prostate_test_x <- x
+prostate_test_y <- y
+
+```
+
+
+
+```{r}
+  # Comparative ROC Curves on the training set
+
+   library(ROCR)
+  x = prostate[, -1]
+ 
+  model_knn1 <- class::knn(x, x, y, k=1, prob=TRUE)
+  prob    <- attr(model_knn1, 'prob')
+  prob    <- 2*ifelse(model_knn1 == "0", 1-prob, prob) - 1
+  pred.1NN <- prediction(prob, y)
+  perf.1NN <- performance(pred.1NN, measure='tpr', x.measure='fpr')
+ 
+  model_knn2 <- class::knn(x, x, y, k=7, prob=TRUE)
+  prob    <- attr(model_knn2, 'prob')
+  prob    <- 2*ifelse(model_knn2 == "0", 1-prob, prob) - 1
+  pred.7NN <- prediction(prob, y)
+  perf.7NN <- performance(pred.7NN, measure='tpr', x.measure='fpr')
+ 
+  model_knn3 <- class::knn(x, x, y, k=9, prob=TRUE)
+  prob    <- attr(model_knn3, 'prob')
+  prob    <- 2*ifelse(model_knn3 == "0", 1-prob, prob) - 1
+  pred.9NN <- prediction(prob, y)
+  perf.9NN <- performance(pred.9NN, measure='tpr', x.measure='fpr')
+ 
+  # Tree cp=0
+  model_tree1 <- rpart(Y~., data = prostate, control = rpart.control(cp = 0))
+  pred.model_tree1 <- prediction(predict(model_tree1, x)[, 2], y)
+  perf.model_tree1 <- performance(pred.model_tree1, "tpr", "fpr")
+ 
+ 
+  # Tree cp=0.05
+  model_tree2 <- rpart(Y~., data = prostate, control = rpart.control(cp = 0.05))
+  pred.model_tree2 <- prediction(predict(model_tree2, x)[, 2], y)
+  perf.model_tree2 <- performance(pred.model_tree2, "tpr", "fpr")
+ 
+ 
+  # Tree cp=0.1
+  model_tree3 <- rpart(Y~., data = prostate, control = rpart.control(cp = 0.1))
+  pred.model_tree3 <- prediction(predict(model_tree3, x)[, 2], y)
+  perf.model_tree3 <- performance(pred.model_tree3, "tpr", "fpr")
+ 
+ 
+ 
+  plot(perf.1NN, col= "red", lwd= 2, lty=2, main=paste('Comparative ROC curves '))
+  plot(perf.7NN, col= "blue", lwd= 2, lty=3, add=TRUE)
+  plot(perf.9NN, col= "green", lwd= 2, lty=4, add=TRUE)
+  plot(perf.model_tree1, col="black", lwd=2, lty=5, add=TRUE)
+  plot(perf.model_tree2, col="brown", lwd=2, lty=6, add=TRUE)
+  plot(perf.model_tree3, col="grey", lwd=2, lty=7, add=TRUE)
+  abline(a=0,b=1)
+  legend('bottomright', inset=0.1, c('1NN','7NN', '9NN', 'Tree(cp=0)',
+        "Tree(cp=0.05)", "Tree(cp=0.1)"),
+         col=c("red", "blue", "green", "black", "brown", "grey"), lty=2:4)
+```
+
+
+
+\vspace{1.5cm}
+
+**12. Plot all the three classification tree grown, using the prp function for the package rpart.plot**
+\vspace{1.5cm}
+```{r}
+library(rpart.plot)
+
+par(mfrow = c(1, 3))
+
+prp(model_tree1)
+prp(model_tree2)
+prp(model_tree3)
+```
+
+
+
+\vspace{1.5cm}
+**13. Comment succinctly on what the ROC curves reveal for this data and argue in light of theory whether or not that was to be expected.**
+
+- The ROC curves reveal that **1NN** achieves near-perfect performance on the training data, as indicated by its sharp rise and almost ideal shape, which suggests significant overfitting.
+
+- The **7NN** and **9NN** classifiers perform worse, displaying smoother curves that reflect reduced sensitivity to noise but also lower accuracy.
+
+- The decision tree with **cp=0** performs well, closely following the 1NN curve, indicating its flexibility and ability to fit the training data.
+
+- However, as the complexity parameter **cp** increases to 0.05 and 0.1, the ROC curves flatten, showing that pruning reduces overfitting but sacrifices training accuracy.
+
+- The trends align with theoretical expectations, where **1NN** memorizes the training set, increasing variance, while larger K values (7NN, 9NN) and pruned trees reduce variance but increase bias. 
+
+- Overall, the results demonstrate the expected trade-off between model complexity and generalization performance.
+
+
+\vspace{1.5cm}
+**14. Using set.seed(19671210) along with a 7/10 training 3/10 test basic stochastic holdout split of the data, compute S = 100 replicated random splits of the test error for all the above learning machines.**
+
+\vspace{1.5cm}
+```{r}
+
+# Parameters for splitting data
+epsilon <-  3 / 10
+n <- nrow(prostate)
+nte <- round(n * epsilon)
+ntr <- n - nte
+S <- 100
+x <- prostate[, -1]
+Y <- prostate$Y
+
+# Stochastic hold
+test_errors <- matrix(0, nrow = S, ncol = 6)
+
+```
+
+
+
+```{r}
+# setting the set seed
+set.seed(19671210)
+for (v in 1:S)
+{
+  
+    # Randomly sample indices for the training set
+    id.tr <- sample(1:n, ntr)   # For a sample of ntr indices from {1,2,..,n}
+    id.te <- setdiff(1:n, id.tr) # Indices not in the training set
+    
+    
+    # Create training and test sets
+    x_train <- x[id.tr, ]
+    y_train <- y[id.tr]
+    x_test  <- x[id.te, ]
+    y_test  <- y[id.te]
+    
+    # Train the 1NN model
+    model_knn1 <- class::knn(x_train, x_test, y_train, k=1, prob=TRUE)
+    
+    # prediction error
+    test_errors[v, 1] <- mean(model_knn1 != y_test)
+    
+    # Train the 7NN model
+    model_knn7 <- class::knn(x_train, x_test, y_train, k=7, prob=TRUE)
+    
+    # prediction error
+    test_errors[v, 2] <- mean(model_knn7 != y_test)
+    
+    # Train the 9NN model
+    model_knn9 <- class::knn(x_train, x_test, y_train, k=9, prob=TRUE)
+    
+    # prediction error
+    test_errors[v, 3] <- mean(model_knn9 != y_test)
+    
+    # Train the Tree model 1
+    tree_model1 <- rpart(Y~., data = prostate[id.tr, ], control = rpart.control(cp = 0))
+
+    # prediction
+    pred_tree1 <-predict(tree_model1, newdata = x_test, type = "class")
+    
+    # prediction error
+    test_errors[v, 4] <- mean(pred_tree1 != y_test)
+    
+    
+    # Train the Tree model 2
+    tree_model2 <- rpart(Y~., data = prostate[id.tr, ], control = rpart.control(cp = 0.05))
+
+    # prediction
+    pred_tree2 <-predict(tree_model2, newdata = x_test, type = "class")
+    
+    # prediction error
+    test_errors[v, 5] <- mean(pred_tree2 != y_test)
+    
+    # Train the Tree model 3
+    tree_model3 <- rpart(Y~., data = prostate[id.tr, ], control = rpart.control(cp = 0.1))
+
+    # prediction
+    pred_tree3 <-predict(tree_model3, newdata = x_test, type = "class")
+    
+    # prediction error
+    test_errors[v, 6] <- mean(pred_tree3 != y_test)
+}
+
+```
+\vspace{1.5cm}
+
+***14.1 The comparative boxplots***
+
+\vspace{1.5cm}
+```{r}
+test <- data.frame(test_errors)
+Method <- c("1NN", "7NN", "9NN", "Tree (cp = 0)", "Tree (cp = 0.05)", "Tree (cp = 0.1)")
+colnames(test) <- Method
+```
+
+
+
+```{r}
+  ggplot(data = melt(test), aes(x=variable, y=value)) + geom_boxplot(aes(fill=variable))+
+    labs(x='Model', y=expression(hat(R)[te]))+
+    theme(legend.position="none")
+```
+
+\vspace{1.5cm}
+
+
+***14.2 Comment on the distribution of the test error in light of (implicit) model complexity.***
+
+- The test error distribution across the six learning machines highlights the impact of model complexity.
+
+- The three tree models have the same median. And the three kNN models have the same median also. 
+
+- It's ho hard to choose which of these models perform well. 
+\vspace{1.5cm}
+
+***14.3 Analysis of Variance***
+\vspace{1.5cm}
+
+```{r}
+aov.method <- aov(value~variable, data=melt(test))
+anova(aov.method)
+summary(aov.method)
+TukeyHSD(aov.method, ordered = TRUE)
+```
+\vspace{1.5cm}
+
+***Comment:***
+
+
+- The **ANOVA table** indicates a statistically significant difference between the means of the models tested, with a **p-value** of **4.02e-06**, suggesting the model type significantly impacts the response variable.
+
+- The **Tukey multiple comparisons** show that models like **Tree (cp = 0.1)** and **7NN** differ significantly, with a **p-value** of 0.0116, while comparisons such as **1NN vs. 9NN** and **Tree (cp = 0.05) vs. Tree (cp = 0.1)** show no significant differences, indicating similar performance.
+
+- The significant differences found between certain models suggest that their predictive abilities vary, while others perform similarly.
+
+- Models with higher **cp** values for Tree tend to perform better than **7NN**, which may indicate that pruning in decision trees enhances performance over simpler models.
+
+- Overall, the analysis shows that while there are significant differences in model performance, many models yield comparable results, which can guide model selection.
+\vspace{1.5cm}
+
+**15. Comment extensively on the most general observation and lesson you gleaned from this exploration.**
+
+- Statistical significance in model comparisons does not always match what is visually evident or intuitively expected. 
+
+- While the boxplot showed similar medians for the KNN models, the ANOVA test revealed significant differences in their mean performances, highlighting the importance of considering variability in addition to central tendency.
+
+-  This suggests that performance comparisons should focus not just on median values, but also on variability (variance). 
+
+- Furthermore, the exploration reinforces the idea that statistical significance does not always imply practical significance—even small performance differences may be statistically significant but not meaningful in real-world applications. 
+
+- Ultimately, this exploration emphasizes the necessity of comprehensive model evaluation, using a combination of tests to understand both the average performance and the stability of models.
+
+\vspace{1.5cm}
+
+
+
+\vspace{1.5cm}
+\vspace{1.5cm}
+
+# Exercise 2: Nearest Neighbors Method for Digit Recognition
+
+\vspace{1.5cm}
+
+```{r}
+#install.packages("dslabs")
+library(ggplot2)
+library(reshape2)
+```
+
+
+```{r}
+library(dslabs) # Package by Yann LeCun to provide the MNIST data
+mnist <- read_mnist() # Read in the MNIST data
+```
+
+
+## Part 1: Multi-class classification on MNIST
+\vspace{1.5cm}
+
+**1. Mathematical form of the expressionof $\hat{f}_{kNN}(x)$, the prediction function of the kNN learning machine**
+\vspace{1.5cm}
+
+$$\hat{f}_{kNN}(x) = \underset{g \in \{1 ... G\}}{\arg \max} \{ p_{g}^{(k)}(x)\}$$
+where
+
+$$p_{g}^{(k)}(x) = \frac{1}{k} \sum^{n}_{i=1} \mathbb{1}(x_i \in \mathcal{V}_k(x)) \mathbb{1} (Y_i = g)  $$
+estimates the probability that $x$ belongs to class $g$ based on $\mathcal{V}_k(x)$.
+
+\vspace{1.5cm}
+
+**2. Choose n a training set size and m a test set size, and write a piece of code for sampling a fragment from the large dataset. Explain why you choose the numbers you chose.**
+\vspace{1.5cm}
+
+##### Choice of n, trainning set size 
+
+\vspace{1.5cm}
+- I choose $n = 450 \times 10 = 4500$.
+
+- The reason why I choose it because, first, we want to do Nearest Neighbors Method for Digit Recognition, so we want more sample size to do it. 
+
+- Furthermore, we have 10 class, and I want 450 samples size for each class, to calibry the dataset. So $450 \times 10 = 4500$.
+
+- And also, to avoid the curse of dimensionality. A larger dataset helps us to ensure meaningful distances between points.
+
+\vspace{1.5cm}
+
+```{r}
+xtrain <- mnist$train$images
+ytrain <- mnist$train$labels
+ytrain <- as.factor(ytrain)
+ntr<- nrow(xtrain)
+p<- ncol(xtrain)
+xtest <- mnist$test$images
+ytest <- mnist$test$labels
+ytest <- as.factor(ytest)
+```
+
+\vspace{1.5cm}
+
+```{r}
+# Number of samples per class
+samples_per_class <- 450
+
+# Create an empty list to store the selected samples
+selected_samples <- list()
+
+# Loop through each class (0 to 9)
+for (class in 0:9) {
+  # Find the indices of samples that belong to the current class
+  class_indices <- which(ytrain == class)
+  
+  # Randomly sample 450 indices from the current class
+  sampled_indices <- sample(class_indices, samples_per_class)
+  
+  # Add the selected samples to the list
+  selected_samples[[as.character(class)]] <- sampled_indices
+}
+
+# Combine all selected samples from all classes
+selected_indices <- unlist(selected_samples)
+
+# Create the new dataset with selected samples
+xtrain_new <- xtrain[selected_indices, ]
+ytrain_new <- ytrain[selected_indices]
+
+# Convert ytrain_new to a factor (if not already)
+ytrain_new <- as.factor(ytrain_new)
+
+# Check the new dataset size and class distribution
+cat("New dataset size: ", nrow(xtrain_new), "\n")
+cat("Class distribution:\n")
+print(table(ytrain_new))
+
+```
+\vspace{1.5cm}
+
+```{r}
+# Shuffle the dataset
+set.seed(42)  # Set a seed for reproducibility (optional)
+shuffled_indices <- sample(nrow(xtrain_new))
+
+# Apply the shuffled indices to both xtrain_new and ytrain_new
+xtrain_shuffled <- xtrain_new[shuffled_indices, ]
+ytrain_shuffled <- ytrain_new[shuffled_indices]
+
+# Check the new shuffled dataset size
+cat("Shuffled train dataset size: ", nrow(xtrain_shuffled), "\n")
+cat("Shuffled class distribution:\n")
+print(table(ytrain_shuffled))
+
+```
+
+
+\vspace{1.5cm}
+
+```{r}
+Xtrain <- xtrain_shuffled
+Ytrain <- ytrain_shuffled
+table(Ytrain)
+```
+\vspace{1.5cm}
+
+
+- The way I choose it is: In the dataset, I extract 450 samples size for each classes, after combine it. After that I mix these results to have mixed dataset as in the first not ordered.
+
+\vspace{1.5cm}
+
+
+##### Choice of m, testing set 
+
+\vspace{1.5cm}
+ - I choose the test set size = 500 because as I did before, here now, I want to take 50 samples size for each classes to represent the test set. 
+ 
+\vspace{1.5cm}
+
+- The way I choose it too is the same as in the train sample size.
+
+\vspace{1.5cm}
+
+```{r}
+# Number of samples per class
+samples_per_class <- 50
+
+# Create an empty list to store the selected samples
+selected_samples_test <- list()
+
+# Loop through each class (0 to 9)
+for (class in 0:9) {
+  # Find the indices of samples that belong to the current class
+  class_indices <- which(ytest == class)
+  
+  # Randomly sample 50 indices from the current class
+  sampled_indices <- sample(class_indices, samples_per_class)
+  
+  # Add the selected samples to the list
+  selected_samples_test[[as.character(class)]] <- sampled_indices
+}
+
+# Combine all selected samples from all classes
+selected_indices_test <- unlist(selected_samples_test)
+
+# Create the new dataset with selected samples
+xtest_new <- xtest[selected_indices_test, ]
+ytest_new <- ytest[selected_indices_test]
+
+# Convert ytest_new to a factor (if not already)
+ytest_new <- as.factor(ytest_new)
+
+# Check the new dataset size and class distribution
+cat("New test dataset size: ", nrow(xtest_new), "\n")
+cat("Class distribution:\n")
+print(table(ytest_new))
+
+```
+
+```{r}
+# Shuffle the test dataset
+set.seed(42)  # Set a seed for reproducibility (optional)
+shuffled_indices_test <- sample(nrow(xtest_new))
+
+# Apply the shuffled indices to both xtest_new and ytest_new
+xtest_shuffled <- xtest_new[shuffled_indices_test, ]
+ytest_shuffled <- ytest_new[shuffled_indices_test]
+
+# Check the new shuffled test dataset size
+cat("Shuffled test dataset size: ", nrow(xtest_shuffled), "\n")
+cat("Shuffled class distribution:\n")
+print(table(ytest_shuffled))
+
+```
+
+
+
+```{r}
+Xtest <- xtest_shuffled
+Ytest <- ytest_shuffled
+table(Ytest)
+```
+\vspace{1.5cm}
+
+**3. Let $S = 50$ be the number of random splits of the data into $70%$ training and $30 %$ Test**
+\vspace{1.5cm}
+
+
+$\Longrightarrow$ In this case, I choose to take 70% training in my sample train set and 30% testing in my sample test set. 
+
+\vspace{1.5cm}
+
+#### 3.1 Build over all the 5 models and compute the test errors for each split, storing the results into a matrix of test errors
+\vspace{1.5cm}
+
+```{r}
+epsilon1 <-  3 / 10
+m <- nrow(Xtest)
+nte <- round(m * epsilon1)
+
+epsilon2 <- 7 / 10
+n <- nrow(Xtrain)
+ntr <- round(n * epsilon2)
+
+S <- 50
+
+# Stochastic hold
+test_errors <- matrix(0, nrow = S, ncol = 5)
+```
+
+\vspace{1.5cm}
+```{r}
+set.seed(19671210)
+for (v in 1:S)
+{
+  
+    # Randomly sample indices for the training set
+    id.tr <- sample(1:n, ntr)   # For a sample of ntr indices from {1,2,..,n}
+    id.te <- sample(1:m, nte) # Indices not in the training set
+    
+    
+    # Create training and test sets
+    x_train <- Xtrain[id.tr, ]
+    y_train <- Ytrain[id.tr]
+    x_test  <- Xtest[id.te, ]
+    y_test  <- Ytest[id.te]
+    
+    # Train the 1NN model
+    model_knn1 <- class::knn(x_train, x_test, y_train, k=1, prob=TRUE)
+    
+    # prediction error
+    test_errors[v, 1] <- mean(model_knn1 != y_test)
+    
+    # Train the 5NN model
+    model_knn5 <- class::knn(x_train, x_test, y_train, k=5, prob=TRUE)
+    
+    # prediction error
+    test_errors[v, 2] <- mean(model_knn5 != y_test)
+    
+    # Train the 1NN model
+    model_knn7 <- class::knn(x_train, x_test, y_train, k=7, prob=TRUE)
+    
+    # prediction error
+    test_errors[v, 3] <- mean(model_knn7 != y_test)
+    
+    # Train the 1NN model
+    model_knn9 <- class::knn(x_train, x_test, y_train, k=9, prob=TRUE)
+    
+    # prediction error
+    test_errors[v, 4] <- mean(model_knn9 != y_test)
+    
+    # Train the 1NN model
+    model_knn13 <- class::knn(x_train, x_test, y_train, k=13, prob=TRUE)
+    
+    # prediction error
+    test_errors[v, 5] <- mean(model_knn13 != y_test)
+}
+```
+
+\vspace{1.5cm}
+
+
+$\Longrightarrow$ The matrix that store the test errors for each split is: test errors
+
+\vspace{1.5cm}
+
+
+#### 2. Identify the machine with the smallest median test error and generate the test confusion matrix from the last split
+
+\vspace{1.5cm}
+
+```{r}
+test <- data.frame(test_errors)
+Method <- c("1NN", "5NN", "7NN", "9NN", "13NN")
+colnames(test) <- Method
+```
+
+
+```{r}
+  ggplot(data = melt(test), aes(x=variable, y=value)) + geom_boxplot(aes(fill=variable))+
+    labs(x='Model', y=expression(hat(R)[te]))+
+    theme(legend.position="none")
+```
+\vspace{1.5cm}
+
+##### The machine with the smallest median 
+\vspace{1.5cm}
+
+```{r}
+# Calculate the median test error for each method
+median_errors <- apply(test, 2, median)
+
+# Identify the machine with the smallest median test error
+min_median <- min(median_errors)
+best_machine <- names(which.min(median_errors))
+
+# Output the minimum median and the corresponding machine
+cat("- Machine with smallest median test error:", best_machine, "\n \n")
+cat("- Value of the minimum median test error:", min_median, "\n")
+
+```
+\vspace{1.5cm}
+
+
+
+The 1NN (1-Nearest Neighbor) model has the smallest median test error of 0.0666667. This low error value indicates that the 1NN model is highly accurate in classifying the data with minimal mistakes.
+
+As we know that the median test error is a robust measure of central tendency that is less affected by outliers compared to the mean. The small median test error for the 1NN model suggests that it performs consistently well across the dataset. However, this consistency comes with a caveat: nearest neighbor models, particularly with k=1, can be prone to overfitting, especially in high-dimensional spaces. This means the model could be capturing noise in the training data, leading to very low error rates in this context but potentially higher errors when applied to new, unseen data.
+
+Despite this, the 1NN model's performance is expected given its inherent ability to make precise predictions by closely matching each test instance to its nearest training instance.
+
+
+
+
+\vspace{1.5cm}
+
+##### Confusion matrix from the last split 
+\vspace{1.5cm}
+
+
+
+```{r}
+# Generate the confusion matrix using the table function
+conf_matrix1 <- table(True = y_test, Predicted = model_knn1)
+conf_matrix5 <- table(True = y_test, Predicted = model_knn5)
+conf_matrix7 <- table(True = y_test, Predicted = model_knn7)
+conf_matrix9 <- table(True = y_test, Predicted = model_knn9)
+conf_matrix13 <- table(True = y_test, Predicted = model_knn13)
+
+
+# Display
+print(conf_matrix1)
+cat("\n")
+print(conf_matrix5)
+cat("\n")
+print(conf_matrix7)
+cat("\n")
+print(conf_matrix9)
+cat("\n")
+print(conf_matrix13)
+```
+
+\vspace{1.5cm}
+
+
+#### 3. Comment on the digits for which there is a lot more confusion. Does that agree with your own prior intuition about digits?
+\vspace{1.5cm}
+
+- The confusion matrix reveals notable misclassifications for digits 2, 3, 8, and 9. Digit 2 is often confused with 1, likely due to visual similarities in certain handwriting styles. Digits 3 and 8 show confusion, possibly caused by poorly formed loops or curvature in handwriting. Finally, digit 9 is sometimes misclassified as 8, reflecting challenges in distinguishing looped digits.
+
+- These patterns align with intuition, as visually similar digits in handwritten form are prone to ambiguity.
+\vspace{1.5cm}
+
+#### 4. Perform an ANOVA of the test errors and comment on the patterns that emerge.
+\vspace{1.5cm}
+
+```{r}
+aov.method <- aov(value~variable, data=melt(test))
+anova(aov.method)
+summary(aov.method)
+TukeyHSD(aov.method, ordered = TRUE)
+```
+\vspace{1.5cm}
+***Comment:***
+
+- The Analysis of Variance (ANOVA) table shows that the variable has a statistically significant effect on the response (p < 0.001).
+
+- Tukey's post-hoc test reveals specific pairwise comparisons where significant differences exist, particularly 13NN-1NN (p < 0.0001), 9NN-1NN (p = 0.0015), and 7NN-1NN (p = 0.027).
+
+- Comparisons involving 13NN consistently show larger mean differences, highlighting its distinct behavior relative to other levels. Non-significant comparisons, such as 5NN-1NN and 9NN-7NN, suggest no meaningful differences between these pairs.
+
+- Overall, the results indicate clear differences among certain groups, particularly those involving 13NN, supporting the importance of variable grouping in the response analysis.
+\vspace{1.5cm}
+
+## Part 2: Binary classification on MNIST
+\vspace{1.5cm}
+
+Consider classifying digit ’1’ against digit ’7’, with ’1’ representing positive and ’7’ representing negative. You will be using just 1NN, 5NN, 7NN, 9NN, and 13NN.
+
+\vspace{1.5cm}
+**1. Store in memory your training set and your test set. Of course you must show the command that extracts only ’1’ and ’7’ from both the training and the test sets.**
+\vspace{1.5cm}
+
+
+
+
+```{r}
+subset_Ytest <- factor(Ytest[Ytest %in% c(1, 7)], levels = c(1,7), labels = c(1,0))
+subset_Ytrain <- factor(Ytrain[Ytrain %in% c(1,7)], levels = c(1,7), labels = c(1,0))
+
+subset_Xtrain <- Xtrain[Ytrain %in% c(1,7),]
+subset_Xtest <- Xtest[Ytest %in% c(1, 7), ]
+
+```
+
+
+\vspace{1.5cm}
+
+- Now we are supposed to consider only the classification of digit 1 against 7. 
+
+- From here, the class 1 is represented by 1 and the class 7 is represented by 0. 
+
+
+\vspace{1.5cm}
+**2. Display both your training confusion matrix and your test confusion matrix**
+\vspace{1.5cm}
+
+```{r}
+dim(subset_Xtrain)
+dim(subset_Xtest)
+```
+\vspace{1.5cm}
+
+```{r}
+# Train the 1NN model
+train_model1 <- class::knn(subset_Xtrain, subset_Xtrain, subset_Ytrain, k=1, prob=TRUE)
+test_model1 <- class::knn(subset_Xtrain, subset_Xtest, subset_Ytrain, k=1, prob=TRUE)
+    
+# Train the 5NN model
+train_model5 <- class::knn(subset_Xtrain, subset_Xtrain, subset_Ytrain, k=5, prob=TRUE)
+test_model5 <- class::knn(subset_Xtrain, subset_Xtest, subset_Ytrain, k=5, prob=TRUE)
+
+# Train the 7NN model
+train_model7 <- class::knn(subset_Xtrain, subset_Xtrain, subset_Ytrain, k=7, prob=TRUE)
+test_model7 <- class::knn(subset_Xtrain, subset_Xtest, subset_Ytrain, k=7, prob=TRUE)
+
+# Train the 9NN model
+train_model9 <- class::knn(subset_Xtrain, subset_Xtrain, subset_Ytrain, k=9, prob=TRUE)
+test_model9 <- class::knn(subset_Xtrain, subset_Xtest, subset_Ytrain, k=9, prob=TRUE)
+
+# Train the 13NN model
+train_model13 <- class::knn(subset_Xtrain, subset_Xtrain, subset_Ytrain, k=13, prob=TRUE)
+test_model13 <- class::knn(subset_Xtrain, subset_Xtest, subset_Ytrain, k=13, prob=TRUE)
+```
+
+
+#### Training and testing confusion matrix 
+
+\vspace{1.5cm}
+
+```{r}
+conf_mat1_test <- table(True = subset_Ytest, Predicted = test_model1)
+conf_mat1_train <- table(True = subset_Ytrain, Predicted = train_model1)
+
+
+cat("Confusion matrix for test set - 1NN \n")
+conf_mat1_test
+cat("\n Confusion matrix for train set - 1NN \n")
+conf_mat1_train
+```
+\vspace{1.5cm}
+
+```{r}
+conf_mat2_test <- table(True = subset_Ytest, Predicted = test_model5)
+conf_mat2_train <- table(True = subset_Ytrain, Predicted = train_model5)
+
+
+cat("Confusion matrix for test set - 5NN \n")
+conf_mat2_test
+cat("\n Confusion matrix for train set - 5NN \n")
+conf_mat2_train
+```
+\vspace{1.5cm}
+
+
+```{r}
+conf_mat3_test <- table(True = subset_Ytest, Predicted = test_model7)
+conf_mat3_train <- table(True = subset_Ytrain, Predicted = train_model7)
+
+
+cat("Confusion matrix for test set - 7NN \n")
+conf_mat3_test
+cat("\n Confusion matrix for train set - 7NN \n")
+conf_mat3_train
+```
+\vspace{1.5cm}
+
+```{r}
+conf_mat4_test <- table(True = subset_Ytest, Predicted = test_model9)
+conf_mat4_train <- table(True = subset_Ytrain, Predicted = train_model9)
+
+
+cat("Confusion matrix for test set - 9NN \n")
+conf_mat4_test
+cat("\n Confusion matrix for train set - 9NN \n")
+conf_mat4_train
+```
+\vspace{1.5cm}
+
+```{r}
+conf_mat5_test <- table(True = subset_Ytest, Predicted = test_model13)
+conf_mat5_train <- table(True = subset_Ytrain, Predicted = train_model13)
+
+
+cat("Confusion matrix for test set - 13NN \n")
+conf_mat5_test
+cat("\n Confusion matrix for train set - 13NN \n")
+conf_mat5_train
+```
+
+\vspace{1.5cm}
+
+**3. Display the comparative ROC curves of the five learning machines**
+
+We plot this to compare the five learning machines.
+
+\vspace{1.5cm}
+
+```{r}
+# Comparative ROC Curves on the testing set
+test.model.1nn <- class::knn(subset_Xtrain, subset_Xtest, subset_Ytrain, k=1, prob = TRUE)
+prob <- attr(test.model.1nn, 'prob')
+prob <- 2*ifelse(test.model.1nn == "0", 1-prob, prob) - 1
+pred.1NN <- prediction(prob, subset_Ytest)
+perf.1NN <- performance(pred.1NN, measure='tpr', x.measure='fpr')
+
+test.model.5nn <- class::knn(subset_Xtrain, subset_Xtest, subset_Ytrain, k=5, prob = TRUE)
+prob <- attr(test.model.5nn, 'prob')
+prob <- 2*ifelse(test.model.5nn == "0", 1-prob, prob) - 1
+pred.5NN <- prediction(prob, subset_Ytest)
+perf.5NN <- performance(pred.5NN, measure='tpr', x.measure='fpr')
+
+test.model.7nn <- class::knn(subset_Xtrain, subset_Xtest, subset_Ytrain, k=7, prob = TRUE)
+prob <- attr(test.model.7nn, 'prob')
+prob <- 2*ifelse(test.model.7nn == "0", 1-prob, prob) - 1
+pred.7NN <- prediction(prob, subset_Ytest)
+perf.7NN <- performance(pred.7NN, measure='tpr', x.measure='fpr')
+
+test.model.9nn <- class::knn(subset_Xtrain, subset_Xtest, subset_Ytrain, k=9, prob = TRUE)
+prob <- attr(test.model.9nn, 'prob')
+prob <- 2*ifelse(test.model.9nn == "0", 1-prob, prob) - 1
+pred.9NN <- prediction(prob, subset_Ytest)
+perf.9NN <- performance(pred.9NN, measure='tpr', x.measure='fpr')
+
+test.model.13nn <- class::knn(subset_Xtrain, subset_Xtest, subset_Ytrain, k=13, prob = TRUE)
+prob <- attr(test.model.13nn, 'prob')
+prob <- 2*ifelse(test.model.13nn == "0", 1-prob, prob) - 1
+pred.13NN <- prediction(prob, subset_Ytest)
+perf.13NN <- performance(pred.13NN, measure='tpr', x.measure='fpr')
+
+# Plot comparative ROC curves
+plot(perf.1NN, col=2, lwd=2, lty=2, main="Comparative ROC curves in Test")
+plot(perf.5NN, col=3, lwd=2, lty=3, add=TRUE)
+plot(perf.7NN, col=4, lwd=2, lty=4, add=TRUE)
+plot(perf.9NN, col=5, lwd=2, lty=5, add=TRUE)
+plot(perf.13NN, col=6, lwd=2, lty=6, add=TRUE)
+abline(a=0, b=1)
+legend('bottomright', inset=0.1, legend=c('1NN', '5NN', '7NN', '9NN', '13NN'), 
+       col=2:6, lty=2:6, lwd=2)
+
+```
+\vspace{1.5cm}
+
+**4. Identify two false positives and two false negatives at the test phase, and in each case, plot the true image against its falsely predicted counterpart.**
+
+\vspace{1.5cm}
+
+##### Two False positives at the test set phase 
+
+
+\vspace{1.5cm}
+
+```{r}
+subytest <- factor(ytest[ytest %in% c(1, 7)], levels = c(1,7), labels = c(1,0))
+subytrain <- factor(ytrain[ytrain %in% c(1,7)], levels = c(1,7), labels = c(1,0))
+
+subxtrain <- xtrain[ytrain %in% c(1,7),]
+subxtest <- xtest[ytest %in% c(1, 7), ]
+
+```
+\vspace{1.5cm}
+
+
+\vspace{1.5cm}
+
+
+```{r}
+test.model.13nn <-  class::knn(subxtrain, subxtest, subytrain, k=13, prob = TRUE)
+```
+
+
+
+```{r}
+library(grid)
+library(gridExtra)
+
+conf.matrix <- table(True = subytest, Predicted = test.model.13nn)
+FP <- conf.matrix[1, 2]
+FN <- conf.matrix[2, 1]
+# indices
+id.misclassified <- which(subytest != test.model.13nn)
+id.conform <- which(subytest == test.model.13nn)
+
+index <- id.misclassified[6]
+index2 <- id.misclassified[3]
+
+images <- mnist$train$images
+misclassified_image1 <- images[index, ]
+misclassified_image2 <- images[index2, ]
+
+misclassified_label1 <- subytest[index]
+misclassified_label2 <- subytest[index2]
+
+predicted_label <- test.model.13nn[index]
+
+image_matrix1 <- matrix(misclassified_image1, nrow = 28, ncol = 28)
+image_matrix2 <- matrix(misclassified_image2, nrow = 28, ncol = 28)
+
+# Normalize the image data to [0, 1]
+image_matrix_normalized1 <- image_matrix1 / max(image_matrix1)
+image_matrix_normalized2 <- image_matrix2 / max(image_matrix2)
+
+# Plot the normalized image with adjusted size
+r1 <- rasterGrob(
+  image_matrix_normalized1,
+  interpolate = FALSE,
+  width = unit(3, "cm"),  
+  height = unit(3, "cm")  
+)
+
+r2 <- rasterGrob(
+  image_matrix_normalized2,
+  interpolate = FALSE,
+  width = unit(3, "cm"),  
+  height = unit(3, "cm")  
+)
+
+
+title1 <- textGrob(paste("True label = 1", "Predicted = 7"), gp = gpar(fontsize = 9, col = "red"))
+title2 <- textGrob(paste("True label = 1", "Predicted = 7"), gp = gpar(fontsize = 9, col = "red"))
+
+fig1 <- arrangeGrob(title1, r1, ncol = 1)
+fig2 <- arrangeGrob(title2, r2, ncol = 1)
+
+grid.arrange(fig1,fig2, ncol = 2)
+```
+\vspace{1.5cm}
+
+##### Two False negatives at the test set phase 
+
+\vspace{1.5cm}
+
+```{r}
+conf.matrix <- table(True = subytest, Predicted = test.model.13nn)
+FP <- conf.matrix[1, 2]
+FN <- conf.matrix[2, 1]
+# indices
+id.misclassified <- which(subytest != test.model.13nn)
+id.conform <- which(subytest == test.model.13nn)
+
+index <- id.misclassified[9]
+index2 <- id.misclassified[8]
+
+images <- mnist$train$images
+misclassified_image1 <- images[index, ]
+misclassified_image2 <- images[index2, ]
+
+misclassified_label1 <- subytest[index]
+misclassified_label2 <- subytest[index2]
+
+predicted_label <- test.model.13nn[index]
+
+image_matrix1 <- matrix(misclassified_image1, nrow = 28, ncol = 28)
+image_matrix2 <- matrix(misclassified_image2, nrow = 28, ncol = 28)
+
+# Normalize the image data to [0, 1]
+image_matrix_normalized1 <- image_matrix1 / max(image_matrix1)
+image_matrix_normalized2 <- image_matrix2 / max(image_matrix2)
+
+# Plot the normalized image with adjusted size
+r1 <- rasterGrob(
+  image_matrix_normalized1,
+  interpolate = FALSE,
+  width = unit(3, "cm"),  
+  height = unit(3, "cm")  
+)
+
+r2 <- rasterGrob(
+  image_matrix_normalized2,
+  interpolate = FALSE,
+  width = unit(3, "cm"),  
+  height = unit(3, "cm")  
+)
+
+
+title1 <- textGrob(paste("True label = 7", "Predicted = 1"), gp = gpar(fontsize = 9, col = "red"))
+title2 <- textGrob(paste("True label = 7", "Predicted = 1"), gp = gpar(fontsize = 9, col = "red"))
+
+fig1 <- arrangeGrob(title1, r1, ncol = 1)
+fig2 <- arrangeGrob(title2, r2, ncol = 1)
+
+grid.arrange(fig1,fig2, ncol = 2)
+```
+
+
+
+
+\vspace{1.5cm}
+
+
+**5. Comment on any pattern that might have emerged.**
+
+\vspace{1.5cm}
+
+Digits 7 shows confusion with digits 1. This suggests that the model may be struggling with distinguishing between these digits, possibly due to their similar shapes in certain handwriting styles.
+
+These patterns align with intuitive expectations about digit recognition. Not only these digits but digits like 3, 7, 8, and 9 share visual characteristics such as curves and loops, making them more prone to misclassification. Similarly, digits 4 and 9 can be easily confused due to their structure in certain handwriting styles.
+
+
+Overall, the emerging pattern from the confusion matrices highlights areas where the model may benefit from further refinement, such as improving feature extraction or incorporating more diverse handwriting styles in training to better differentiate between these commonly confused digits.
+
+\vspace{1.5cm}
+
+\vspace{1.5cm}
+
+# Exercise 3: Video component
+
+$\textbf{Link of the video:}$ https://youtu.be/hYOD8eCwzWU
+
+
+
+
+
+
+
+
+
+
+
